@@ -197,8 +197,22 @@ export interface SchedulerHandle {
   stop(): void;
   /** 已排入 AudioContext 的事件（测试/可视化用） */
   scheduled(): ScheduleEvent[];
+  /** 已预排但尚未到合成时刻的事件（测试/可视化用） */
+  pending(): ScheduleEvent[];
   /** 当前播放到的时间（ctx 时轴） */
   currentTime(): number;
+  /**
+   * 伸缩系数变更（散板播放中调用）：已合成的事件保持不动，
+   * 以最近已发声事件为锚点，按新旧「每格秒数」之比重排尚未合成的事件。
+   * 返回锚点时刻与锚点的全曲绝对格位置（无已发声事件时锚点为起点 0 格）。
+   */
+  retune(nextPer: number): { pivot: number; anchorTick: number };
+}
+
+/** 调度时间轴元信息：startTime = 首格对应的 ctx 时刻，per = 每格秒数（retune 用） */
+export interface TimingInfo {
+  startTime: number;
+  per: number;
 }
 
 const LOOKAHEAD_S = 0.12; // 预排窗口
@@ -213,18 +227,31 @@ export function scheduleEvents(
   master: AudioNode,
   score: Score,
   events: ScheduleEvent[],
-  onVisual?: (ev: ScheduleEvent) => void,
+  onVisual: ((ev: ScheduleEvent) => void) | undefined,
+  timing: TimingInfo,
 ): SchedulerHandle {
   const instMap = new Map(score.instruments.map((i) => [i.id, i]));
   let idx = 0;
   const done: ScheduleEvent[] = [];
   let stopped = false;
+  // retune 时替换为新事件表；时间轴参数（startTime 不变，per 更新）
+  let pendingEvents = events;
+  let per = timing.per;
+  // 各小节起始的全曲绝对格（retune 时把锚点事件换算回格位置用）
+  const barStartTick = new Map<number, number>();
+  {
+    let acc = 0;
+    for (const b of score.bars) {
+      barStartTick.set(b.index, acc);
+      acc += barTicks(b.beatsPerBar);
+    }
+  }
 
   const pump = () => {
     if (stopped) return;
     const now = ctx.currentTime;
-    while (idx < events.length && events[idx].time < now + LOOKAHEAD_S) {
-      const ev = events[idx++];
+    while (idx < pendingEvents.length && pendingEvents[idx].time < now + LOOKAHEAD_S) {
+      const ev = pendingEvents[idx++];
       const inst = instMap.get(ev.instrumentId);
       if (!inst) continue;
       synthesizeHit(ctx, master, inst, ev.hit, ev.time);
@@ -241,7 +268,29 @@ export function scheduleEvents(
       window.clearInterval(timer);
     },
     scheduled: () => done.slice(),
+    pending: () => pendingEvents.slice(idx),
     currentTime: () => ctx.currentTime,
+    retune(nextPer: number) {
+      const anchor = done.length ? done[done.length - 1] : null;
+      const pivot = anchor ? anchor.time : timing.startTime;
+      const anchorTick = anchor ? (barStartTick.get(anchor.barIndex) ?? 0) + anchor.offset : 0;
+      if (nextPer <= 0 || nextPer === per) return { pivot, anchorTick };
+      const ratio = nextPer / per;
+      // 以最近已发声事件为锚点（尚未发声时锚定起点 startTime），
+      // 时间轴关于 startTime 是线性的：t = startTime + absTick*per，
+      // 故未发声事件改走 nextPer 后，相对锚点的偏移按 ratio 缩放。
+      const now = ctx.currentTime;
+      const retimed = pendingEvents.slice(idx).map((ev) => ({
+        ...ev,
+        time: Math.max(pivot + (ev.time - pivot) * ratio, now + 0.001),
+      }));
+      retimed.sort((a, b) => a.time - b.time);
+      pendingEvents = retimed;
+      idx = 0;
+      per = nextPer;
+      pump();
+      return { pivot, anchorTick };
+    },
   };
 }
 
@@ -255,12 +304,14 @@ export function playRange(
   loopCount: number,
   onVisual?: (ev: ScheduleEvent) => void,
   startOffsetS = 0,
+  stretch = 1,
 ): SchedulerHandle {
   void barTicks; // 保持引用一致性（未直接使用）
   const startAt = ctx.currentTime + 0.06 + startOffsetS;
+  const per = tickSeconds(score.bpm) * (score.freeMeter ? stretch : 1);
   const events =
     loopCount > 1
-      ? computeLoopEvents(score, fromTick, toTick, startAt, loopCount)
-      : computeEvents(score.bars, score.bpm, score.freeMeter, score.instruments, fromTick, toTick, startAt);
-  return scheduleEvents(ctx, master, score, events, onVisual);
+      ? computeLoopEvents(score, fromTick, toTick, startAt, loopCount, stretch)
+      : computeEvents(score.bars, score.bpm, score.freeMeter, score.instruments, fromTick, toTick, startAt, stretch);
+  return scheduleEvents(ctx, master, score, events, onVisual, { startTime: startAt, per });
 }

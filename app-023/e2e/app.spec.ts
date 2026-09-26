@@ -206,6 +206,100 @@ test.describe('设置', () => {
   });
 });
 
+test.describe('散板', () => {
+  test('谱面不画格线、角标随系数更新；播放中改系数按新值续播', async ({ page }) => {
+    await createEmptyScore(page, 'E2E 散板');
+    // 非散板：格线照常存在（每小节 17 条竖线：13 格线 + 4 拍线 + 1 小节线）
+    const normalLines = page.locator('[data-testid="grid-bar-0"] line[data-line-kind]');
+    await expect.poll(async () => normalLines.count()).toBe(17);
+    await expect(page.getByTestId('grid-free-badge')).toHaveCount(0);
+
+    // 每拍落一鼓音：0、4、8、12 格
+    await page.getByTestId('grid-cell-0-0').click();
+    await page.keyboard.type('z');
+    for (const t of [4, 8, 12]) {
+      await page.getByTestId(`grid-cell-0-${t}`).click();
+      await page.keyboard.type('z');
+    }
+
+    // 切散板
+    await page.getByTestId('chk-freemeter').check();
+
+    // 散板：只剩每拍起始线与小节线（5 条），格线不画
+    const barGroup = page.locator('[data-testid="grid-bar-0"]');
+    await expect
+      .poll(async () => barGroup.locator('line[data-line-kind="grid"]').count())
+      .toBe(0);
+    await expect
+      .poll(async () => barGroup.locator('line[data-line-kind="beat"]').count())
+      .toBe(4);
+    await expect
+      .poll(async () => barGroup.locator('line[data-line-kind="bar"]').count())
+      .toBe(1);
+
+    // 角标标出散板与当前系数
+    const badge = page.getByTestId('grid-free-badge');
+    await expect(badge).toBeVisible();
+    await expect(page.getByTestId('grid-free-stretch')).toHaveText('伸缩 1.00×');
+
+    // 时值线长度仍按时值比例（整拍 = 4 * pxPerTick - 2）
+    const widths = await page.evaluate(() => {
+      const out: number[] = [];
+      for (const t of [0, 4, 8, 12]) {
+        const g = document.querySelector(`[data-testid="grid-glyph-0-${t}-gu"]`);
+        const line = g?.querySelector('line[stroke="#b30000"]') as SVGLineElement | null;
+        if (line) out.push(Math.abs(line.x2.baseVal.value - line.x1.baseVal.value));
+      }
+      return out;
+    });
+    expect(widths).toEqual([54, 54, 54, 54]); // 4*14-2
+
+    // 播放
+    await page.getByTestId('btn-play').click();
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              (window as unknown as { __scheduled?: () => { time: number }[] }).__scheduled?.().length ?? 0,
+          ),
+        { timeout: 8000 },
+      )
+      .toBeGreaterThanOrEqual(1);
+
+    // 等格时长（BPM 100 → 60/100/4 = 0.15s/格）
+    const collect = () =>
+      page.evaluate(() => {
+        const evs = (window as unknown as { __scheduled?: () => { time: number }[] }).__scheduled?.() ?? [];
+        return [...new Set(evs.map((e) => e.time))].sort((a, b) => a - b);
+      });
+    const times1 = await collect();
+    expect(times1.length).toBeGreaterThanOrEqual(1);
+    if (times1.length >= 2) {
+      const gap = times1[1] - times1[0];
+      expect(Math.abs(gap - 0.6)).toBeLessThan(0.02); // 4 格 × 0.15
+    }
+
+    // 播放中把系数拉到 2.00
+    await page.getByTestId('rng-transport-stretch').fill('2');
+    await expect(page.getByTestId('transport-free-stretch')).toHaveText('2.00×');
+    await expect(page.getByTestId('grid-free-stretch')).toHaveText('伸缩 2.00×'); // 角标跟着更新
+
+    // 已发声一击不动；改系数后新排入的相邻事件间隔 = 0.6 × 2 = 1.2s
+    await expect
+      .poll(async () => {
+        const ts = await collect();
+        return ts.length;
+      }, { timeout: 8000 })
+      .toBeGreaterThanOrEqual(2);
+    const times2 = await collect();
+    const maxGap = Math.max(...times2.slice(1).map((t, i) => t - times2[i]));
+    expect(maxGap).toBeGreaterThan(1.0); // 新系数 2× 的间隔（1.2s）出现
+
+    await page.getByTestId('btn-play').click();
+  });
+});
+
 test.describe('性能', () => {
   test('验收：100 小节谱面滚动 ≥ 50fps', async ({ page }) => {
     await createEmptyScore(page, 'E2E 百小节');

@@ -22,6 +22,8 @@ interface Props {
   selectedInstrument?: string | null;
   showJianpu?: boolean;
   showBeatHighlightBg?: boolean;
+  /** 散板近似播放伸缩系数（散板角标显示当前值） */
+  stretch?: number;
   onCellClick?: (bar: number, tick: number) => void;
   testIdPrefix?: string;
 }
@@ -39,10 +41,12 @@ export function ScoreGrid({
   selectedInstrument = null,
   showJianpu = false,
   showBeatHighlightBg = true,
+  stretch = 1,
   onCellClick,
   testIdPrefix = 'grid',
 }: Props) {
   const instruments: Instrument[] = score.instruments;
+  const freeMeter = score.freeMeter;
   const rows = instruments.length;
   const jianpuH = showJianpu ? 26 : 0;
   const labelW = 64; // 左侧行标（乐器名）
@@ -70,6 +74,9 @@ export function ScoreGrid({
   const totalW = Math.max(...layout.map((l) => l.x + l.w), 100);
   const totalRows = layout.length ? layout[layout.length - 1].y / sysH + 1 : 1;
   const totalH = totalRows * sysH;
+  // 散板角标占右侧留白（仅散板加宽，非散板布局不变）
+  const badgeW = freeMeter ? 96 : 0;
+  const svgW = totalW + labelW + badgeW;
 
   const cell = (bar: number, tick: number) =>
     onCellClick ? () => onCellClick(bar, tick) : undefined;
@@ -78,12 +85,13 @@ export function ScoreGrid({
     <svg
       data-testid={testIdPrefix}
       xmlns="http://www.w3.org/2000/svg"
-      width={totalW + labelW}
+      width={svgW}
       height={totalH}
-      viewBox={`0 0 ${totalW + labelW} ${totalH}`}
+      viewBox={`0 0 ${svgW} ${totalH}`}
       className="score-svg"
       fontFamily={FONT_STACK}
       data-bars={score.bars.length}
+      data-free-meter={freeMeter ? '1' : '0'}
     >
       {layout.map(({ barIndex, x, y, w }) => {
         const bar = score.bars[barIndex];
@@ -243,14 +251,16 @@ export function ScoreGrid({
                 })}
               </g>
             )}
-            {/* 拍线（灰）与格线（浅灰） */}
+            {/* 拍线（灰）与格线（浅灰）；散板只画每拍起始线与小节线，不画格线 */}
             {Array.from({ length: barTicks(bar.beatsPerBar) + 1 }, (_, t) => {
-              const lx = gx + t * pxPerTick;
               const isBeat = t % TICKS_PER_BEAT === 0;
+              if (freeMeter && !isBeat) return null; // 散板：格线不画
+              const lx = gx + t * pxPerTick;
               const isBar = t === barTicks(bar.beatsPerBar);
               return (
                 <line
                   key={t}
+                  data-line-kind={isBar ? 'bar' : isBeat ? 'beat' : 'grid'}
                   x1={lx}
                   y1={y + gridTop}
                   x2={lx}
@@ -313,6 +323,33 @@ export function ScoreGrid({
           </g>
         );
       })}
+      {/* 散板角标：谱面右上角落标出散板与当前伸缩系数（系数变更时随设置实时刷新） */}
+      {freeMeter && (
+        <g data-testid={`${testIdPrefix}-free-badge`}>
+          <rect
+            x={labelW + totalW + 8}
+            y={2}
+            width={badgeW - 12}
+            height={30}
+            rx={5}
+            fill="#fff8e8"
+            stroke="#c96a00"
+            strokeWidth={1}
+          />
+          <text x={labelW + totalW + 16} y={15} fontSize={12} fontWeight={700} fill="#a2561c">
+            散板
+          </text>
+          <text
+            x={labelW + totalW + 16}
+            y={28}
+            fontSize={10}
+            fill="#a2561c"
+            data-testid={`${testIdPrefix}-free-stretch`}
+          >
+            {`伸缩 ${stretch.toFixed(2)}×`}
+          </text>
+        </g>
+      )}
     </svg>
   );
 }

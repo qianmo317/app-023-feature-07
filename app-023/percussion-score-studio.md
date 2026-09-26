@@ -104,9 +104,9 @@ IndexedDB 库名 `app023-percussion`，对象仓 `scores`（keyPath `id`，索�
 ### 已知实现边界
 逐条核对 README 声称与代码实际行为，以下为不一致或未接线的部分：
 1. 独奏/静音不改变发声：`audible()` 只被 `visual()` 调用（`src/hooks/useAudio.ts:76`），调度路径 `playRange → scheduleEvents → synthesizeHit` 不读 `soloMute`，点「独」/「默」只影响高亮更新（README §3）。
-2. 散板伸缩未接线：`currentBeatStretch` 只在设置页读写（`src/settingsContext.tsx:37`、`src/pages/Settings.tsx:57-68`），`playRange` 调用 `computeLoopEvents` / `computeEvents` 时不传 `stretch`，实际恒为 1（`src/lib/audio.ts:261-264`，README §4.4）。
+2. ~~散板伸缩未接线：`currentBeatStretch` 只在设置页读写（`src/settingsContext.tsx:37`、`src/pages/Settings.tsx:57-68`），`playRange` 调用 `computeLoopEvents` / `computeEvents` 时不传 `stretch`，实际恒为 1（`src/lib/audio.ts:261-264`，README §4.4）。~~ **已接线（散板）**：`useAudio` 从设置读 `currentBeatStretch` 传入 `playRange`；`scheduleEvents.retune(nextPer)` 在播放中系数变更时以最近已发声事件为锚点、按新旧每格秒数之比重排未合成事件（已发声一击不动），收尾定时器同步重排。非散板路径恒按 stretch=1，行为不变。
 3. 播放高亮列定位有误：`position.tick` 存的是小节绝对起始格（`src/hooks/useAudio.ts:77-79`），`ScoreGrid` 又把它当小节内偏移使用（`src/components/ScoreGrid.tsx:276`），高亮固定落在小节首拍处，与 README §4.3「不会与声音错位」不符。
-4. 散板「不画严格拍格」未实现：`ScoreGrid` 不读取 `freeMeter`，始终按每拍 4 格画拍线与格线（`src/components/ScoreGrid.tsx:247-262`，README §4.4）。
+4. ~~散板「不画严格拍格」未实现：`ScoreGrid` 不读取 `freeMeter`，始终按每拍 4 格画拍线与格线（`src/components/ScoreGrid.tsx:247-262`，README §4.4）。~~ **已实现**：`ScoreGrid` 读取 `score.freeMeter`，散板时只画每拍起始线与小节线（`data-line-kind="beat"|"bar"`）、不画格线（跳过非 4 倍数位置），时值线长度仍按 `beats × pxPerTick` 的相对比例；谱面右上角加散板角标，显示「散板 · 伸缩 X.XX×」并随设置实时刷新（编辑页与打印页共用，打印自动带入当前系数）。非散板渲染（格线数量、无角标、SVG 宽度）保持不变。
 5. 谱面校验函数未接入界面：`validateScore`（`src/lib/grid.ts:148`）与 `validateHitGlyphs`（`src/lib/glyphs.ts:59`）在 `src/` 内无调用方，只有测试引用，README §4.1「`isBarFull` 随处校验」、§4.2「谱面数据校验」在 UI 上无触发点。
 6. 设置页「乐器音色」改动无效果：`patchSynth` 只改组件内 `useState`（`src/pages/Settings.tsx:42-46`、`:117-146`），既不写 IndexedDB 也不回写曲目，README §5.4 所称「设置页直接改（仅本浏览器生效）」在这份代码里是无效操作。
 7. 交互元素不全是真实控件：乐器行是可点击 `<div>`（`src/pages/Editor.tsx:353-359`）、谱面落字热区是 SVG `<rect>`（`src/components/ScoreGrid.tsx:299-312`），与 README §7「交互元素用真实 `<button>`/`<input>`」有出入。

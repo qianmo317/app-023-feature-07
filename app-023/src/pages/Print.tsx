@@ -4,12 +4,14 @@ import type { Score } from '../types';
 import { getScore } from '../lib/storage';
 import { barsPerRow } from '../lib/grid';
 import { ScoreGrid } from '../components/ScoreGrid';
+import { useSettings } from '../settingsContext';
 
 const A4_LANDSCAPE_PX = 1047; // 297mm 减页边距 @96dpi
 
 export function Print({ scoreId }: { scoreId: string }) {
   const [score, setScore] = useState<Score | null>(null);
   const [jianpu, setJianpu] = useState(false);
+  const { s: settings } = useSettings();
 
   useEffect(() => {
     getScore(scoreId).then((s) => setScore(s ?? null));
@@ -87,7 +89,7 @@ export function Print({ scoreId }: { scoreId: string }) {
         {score.freeMeter ? '散板（自由时值，宽度为相对表达）' : `${score.bars[0]?.beatsPerBar ?? 4}/4 · ${score.bpm} BPM`}
       </p>
       <div className="print-score" data-testid="print-score">
-        <ScoreGrid score={score} pxPerTick={pxPerTick} rowHeight={40} barsPerRow={barsPerRowVal} showJianpu={jianpu} testIdPrefix="print" />
+        <ScoreGrid score={score} pxPerTick={pxPerTick} rowHeight={40} barsPerRow={barsPerRowVal} showJianpu={jianpu} testIdPrefix="print" stretch={settings.currentBeatStretch} />
       </div>
       <p className="print-foot no-print dim">打印建议：A4 横向、边距 10mm、勾选「背景图形」。</p>
     </div>

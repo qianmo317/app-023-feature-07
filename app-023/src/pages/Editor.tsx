@@ -19,14 +19,20 @@ interface Props {
 }
 
 export function Editor({ scoreId, onNavigate }: Props) {
-  const { s: settings, setShowHighlight } = useSettings();
+  const { s: settings, setShowHighlight, setStretch } = useSettings();
   const [score, setScore] = useState<Score | null>(null);
   const [selection, setSelection] = useState<Selection>({ bar: 0, tick: 0 });
   const [duration, setDuration] = useState(TICKS_PER_BEAT);
   const [selectedInst, setSelectedInst] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string>('');
   const [err, setErr] = useState<string>('');
-  const audio = useAudio(score ?? ({ bars: [] } as unknown as Score));
+  const audio = useAudio(score ?? ({ bars: [] } as unknown as Score), settings.currentBeatStretch);
+
+  // 伸缩系数变更：正在播放的散板按新系数续排（已发声的一击不动）；非散板不受影响
+  useEffect(() => {
+    audio.retuneStretch(settings.currentBeatStretch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.currentBeatStretch]);
 
   useEffect(() => {
     getScore(scoreId).then((s) => {
@@ -439,6 +445,7 @@ export function Editor({ scoreId, onNavigate }: Props) {
               selection={selection}
               highlight={audio.playing && settings.showHighlight ? audio.position : null}
               selectedInstrument={instId}
+              stretch={settings.currentBeatStretch}
               onCellClick={onCellClick}
             />
           </div>
@@ -458,6 +465,8 @@ export function Editor({ scoreId, onNavigate }: Props) {
         showHighlight={settings.showHighlight}
         onToggleHighlight={() => setShowHighlight(!settings.showHighlight)}
         position={audio.position}
+        stretch={settings.currentBeatStretch}
+        onStretchChange={setStretch}
       />
     </div>
   );
