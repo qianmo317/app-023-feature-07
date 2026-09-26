@@ -30,7 +30,7 @@
 - 段落循环：从选中处起循环 4 小节，循环间无相位漂移。
 - 拍号 2/4、3/4、4/4 切换；`+4 小节` / `−末小节` 增删小节。
 - 键位重绑：设置页点「改」后按新键，同一键只映射一个字，改动写入 IndexedDB。
-- 散板（`freeMeter`）标记与每小节 `tempoNote` 文字标记（数据模型与谱面显示支持，暂无 UI 入口）。
+- 散板（`freeMeter`）：谱面只画每拍起始线与小节线（不画格线），时值线仍按时值比例，右上角角标「散板 · 相对宽度 ×系数」；播放按等格时长 × 设置页伸缩系数排每击时刻，播放中改系数从当前小节起按新值继续；每小节 `tempoNote` 文字标记。
 - 简谱对照行、PNG 导出。
 
 ## 6. 页面结构
@@ -90,12 +90,12 @@ IndexedDB 库名 `app023-percussion`，对象仓 `scores`（keyPath `id`，索�
 - 窄屏（≤760px）编辑区改为纵向，乐器面板横向滚动，隐藏面板标题与提示。
 
 ## 10. 验收标准
-- 单元测试 58 例全绿：`tests/grid.test.ts` 26 例、`tests/glyphs.test.ts` 18 例、`tests/scheduler.test.ts` 9 例、`tests/storage.test.ts` 5 例。
+- 单元测试 67 例全绿：`tests/grid.test.ts` 26 例、`tests/glyphs.test.ts` 18 例、`tests/scheduler.test.ts` 13 例、`tests/storage.test.ts` 5 例、`tests/scoregrid.test.ts` 5 例。
 - 时值换算：整拍 4 / 半拍 2 / ¼ 拍 1 / 附点 6 / 附点半拍 3；4/4 = 16 格、2/4 = 8 格、3/4 = 12 格；不满小节被校验判为错误。
 - 调度精度：BPM 120 连续 240 拍，每击时刻与「整数格 × 固定每格秒数」的独立重算结果完全一致，相邻间隔偏差 < 1e-9s（验收线 10ms），末击无累积漂移。
 - 齐奏：同一步内鼓、大锣、钹三击的时间集合大小 = 1，完全同刻而非近似。
 - 曲牌健壮性：6 个内置骨架经 `scoreFromPattern` 转换后 `validateScore` 与 `validateHitGlyphs` 均返回空数组。
-- E2E 13 例：建谱 → 录入 → 齐奏同列（三字中心 x 差 < 1px）→ 播放高亮 → BPM 加减 → 刷新不丢 → 打印视图 4 小节一行且 SVG 宽度 ≤ 1047+64+2 → 改键位后刷新仍生效 → 100 小节谱面滚动 ≥ 50fps。
+- E2E 15 例：建谱 → 录入 → 齐奏同列（三字中心 x 差 < 1px）→ 播放高亮 → BPM 加减 → 刷新不丢 → 打印视图 4 小节一行且 SVG 宽度 ≤ 1047+64+2 → 改键位后刷新仍生效 → 散板谱面线制与角标 → 散板播放按系数排时刻且播放中改系数按新值继续 → 100 小节谱面滚动 ≥ 50fps。
 - Docker 容器内 `curl http://localhost:8103/healthz` 返回 200 与文本 `ok`。
 
 ## 11. 边界（刻意不做）
@@ -104,13 +104,11 @@ IndexedDB 库名 `app023-percussion`，对象仓 `scores`（keyPath `id`，索�
 ### 已知实现边界
 逐条核对 README 声称与代码实际行为，以下为不一致或未接线的部分：
 1. 独奏/静音不改变发声：`audible()` 只被 `visual()` 调用（`src/hooks/useAudio.ts:76`），调度路径 `playRange → scheduleEvents → synthesizeHit` 不读 `soloMute`，点「独」/「默」只影响高亮更新（README §3）。
-2. 散板伸缩未接线：`currentBeatStretch` 只在设置页读写（`src/settingsContext.tsx:37`、`src/pages/Settings.tsx:57-68`），`playRange` 调用 `computeLoopEvents` / `computeEvents` 时不传 `stretch`，实际恒为 1（`src/lib/audio.ts:261-264`，README §4.4）。
-3. 播放高亮列定位有误：`position.tick` 存的是小节绝对起始格（`src/hooks/useAudio.ts:77-79`），`ScoreGrid` 又把它当小节内偏移使用（`src/components/ScoreGrid.tsx:276`），高亮固定落在小节首拍处，与 README §4.3「不会与声音错位」不符。
-4. 散板「不画严格拍格」未实现：`ScoreGrid` 不读取 `freeMeter`，始终按每拍 4 格画拍线与格线（`src/components/ScoreGrid.tsx:247-262`，README §4.4）。
-5. 谱面校验函数未接入界面：`validateScore`（`src/lib/grid.ts:148`）与 `validateHitGlyphs`（`src/lib/glyphs.ts:59`）在 `src/` 内无调用方，只有测试引用，README §4.1「`isBarFull` 随处校验」、§4.2「谱面数据校验」在 UI 上无触发点。
-6. 设置页「乐器音色」改动无效果：`patchSynth` 只改组件内 `useState`（`src/pages/Settings.tsx:42-46`、`:117-146`），既不写 IndexedDB 也不回写曲目，README §5.4 所称「设置页直接改（仅本浏览器生效）」在这份代码里是无效操作。
-7. 交互元素不全是真实控件：乐器行是可点击 `<div>`（`src/pages/Editor.tsx:353-359`）、谱面落字热区是 SVG `<rect>`（`src/components/ScoreGrid.tsx:299-312`），与 README §7「交互元素用真实 `<button>`/`<input>`」有出入。
-8. 其余：`changeBeatsPerBar` 末尾 `freeMeter: bpb === 0 ? s.freeMeter : s.freeMeter` 是恒等写法（`src/pages/Editor.tsx:279`，死代码，不影响行为），且改拍号按格偏移搬运 hits，小节变短会丢弃超出的击点；`velocity` 只有类型与渲染、没有编辑入口（`resolveKey` 固定为 2，`src/lib/glyphs.ts:46`）；README 首段指向的仓库根 `README.md`（`../../README.md`）在本批次目录中不存在。
+2. 播放高亮列定位有误：`position.tick` 存的是小节绝对起始格（`src/hooks/useAudio.ts:77-79`），`ScoreGrid` 又把它当小节内偏移使用（`src/components/ScoreGrid.tsx:276`），高亮固定落在小节首拍处，与 README §4.3「不会与声音错位」不符。
+3. 谱面校验函数未接入界面：`validateScore`（`src/lib/grid.ts:148`）与 `validateHitGlyphs`（`src/lib/glyphs.ts:59`）在 `src/` 内无调用方，只有测试引用，README §4.1「`isBarFull` 随处校验」、§4.2「谱面数据校验」在 UI 上无触发点。
+4. 设置页「乐器音色」改动无效果：`patchSynth` 只改组件内 `useState`（`src/pages/Settings.tsx:42-46`、`:117-146`），既不写 IndexedDB 也不回写曲目，README §5.4 所称「设置页直接改（仅本浏览器生效）」在这份代码里是无效操作。
+5. 交互元素不全是真实控件：乐器行是可点击 `<div>`（`src/pages/Editor.tsx:353-359`）、谱面落字热区是 SVG `<rect>`（`src/components/ScoreGrid.tsx:299-312`），与 README §7「交互元素用真实 `<button>`/`<input>`」有出入。
+6. 其余：`changeBeatsPerBar` 末尾 `freeMeter: bpb === 0 ? s.freeMeter : s.freeMeter` 是恒等写法（`src/pages/Editor.tsx:279`，死代码，不影响行为），且改拍号按格偏移搬运 hits，小节变短会丢弃超出的击点；`velocity` 只有类型与渲染、没有编辑入口（`resolveKey` 固定为 2，`src/lib/glyphs.ts:46`）；README 首段指向的仓库根 `README.md`（`../../README.md`）在本批次目录中不存在。
 
 ## 12. 容器化与构建（Docker）
 
@@ -129,5 +127,5 @@ curl -I http://localhost:8103/          # 200 且 Cache-Control: no-cache
 docker compose down
 ```
 
-- 本地自检：`npm run build`（`tsc -b` 类型检查 + `vite build`）零错误；`npm test` 58 例全绿；`E2E_BASE_URL=http://localhost:8103 npx playwright test` 可对容器复跑 13 例 E2E。
+- 本地自检：`npm run build`（`tsc -b` 类型检查 + `vite build`）零错误；`npm test` 67 例全绿；`E2E_BASE_URL=http://localhost:8103 npx playwright test` 可对容器复跑 15 例 E2E。
 - 数据边界：曲目存在浏览器 IndexedDB，按源隔离，dev（5173）、preview（4174）、容器（8103）三处数据互不相通，属预期行为。

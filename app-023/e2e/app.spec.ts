@@ -206,6 +206,81 @@ test.describe('设置', () => {
   });
 });
 
+test.describe('散板', () => {
+  async function createFreeScore(page: Page, title: string) {
+    await page.goto('#/');
+    await page.getByTestId('new-title').fill(title);
+    await page.getByTestId('new-free').check();
+    await page.getByTestId('btn-create').click();
+    await expect(page.getByTestId('editor-page')).toBeVisible();
+  }
+
+  /** React 受控 range：用原生 setter 写值再发 input 事件 */
+  async function setRange(page: Page, testid: string, value: string) {
+    await page.getByTestId(testid).evaluate((el, v) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+  }
+
+  test('谱面只画拍线与小节线，角落标散板与当前系数；时值线仍按时值比例', async ({ page }) => {
+    await createFreeScore(page, 'E2E 散板谱面');
+    // 角标：散板 + 默认系数 ×1.00
+    const mark = page.getByTestId('grid-freemeter-mark');
+    await expect(mark).toBeVisible();
+    await expect(mark).toContainText('散板');
+    await expect(mark).toContainText('×1.00');
+    // 无格线（#eee），拍线（#c9c9c9）与小节线（#c0392b）仍在
+    expect(await page.locator('[data-testid="grid"] line[stroke="#eee"]').count()).toBe(0);
+    expect(await page.locator('[data-testid="grid"] line[stroke="#c9c9c9"]').count()).toBeGreaterThan(0);
+    expect(await page.locator('[data-testid="grid"] line[stroke="#c0392b"]').count()).toBeGreaterThan(0);
+    // 时值线按时值比例：半拍 2 格 × 14px − 2 间隙 = 26
+    await page.getByTestId('grid-cell-0-0').click();
+    await page.keyboard.press('2');
+    await page.keyboard.type('z');
+    const len = await page.evaluate(() => {
+      const line = document.querySelector('[data-testid="grid-glyph-0-0-gu"] line[stroke="#b30000"]');
+      return line ? Number(line.getAttribute('x2')) - Number(line.getAttribute('x1')) : -1;
+    });
+    expect(len).toBe(26);
+    // 对照：非散板谱画格线、无角标
+    await createEmptyScore(page, 'E2E 非散板对照');
+    expect(await page.locator('[data-testid="grid"] line[stroke="#eee"]').count()).toBeGreaterThan(0);
+    await expect(page.getByTestId('grid-freemeter-mark')).toHaveCount(0);
+    await expect(page.getByTestId('rng-transport-stretch')).toHaveCount(0);
+  });
+
+  test('播放按等格×系数排时刻；播放中改系数按新值继续，角标跟着变', async ({ page }) => {
+    await createFreeScore(page, 'E2E 散板播放');
+    // 两个字相隔 4 格（BPM 100 → 每格 0.15s）
+    await page.getByTestId('grid-cell-0-0').click();
+    await page.keyboard.type('z');
+    await page.keyboard.type('z'); // 光标自动前进 4 格后落第二个
+    // 先把系数调到 1.5（未播放时角标即跟随）
+    await setRange(page, 'rng-transport-stretch', '1.5');
+    await expect(page.getByTestId('grid-freemeter-mark')).toContainText('×1.50');
+    // 播放：两击间隔 = 4 格 × 0.15 × 1.5 = 0.9s
+    await page.getByTestId('btn-play').click();
+    const readDelta = () =>
+      page.evaluate(() => {
+        const evs = (window as unknown as { __scheduled?: () => { time: number }[] }).__scheduled?.() ?? [];
+        if (evs.length < 2) return -1;
+        const u = [...new Set(evs.map((e) => e.time))].sort((a, b) => a - b);
+        return u[1] - u[0];
+      });
+    await expect.poll(readDelta, { timeout: 8000 }).toBeGreaterThan(0);
+    expect(Math.abs((await readDelta()) - 0.9)).toBeLessThan(0.01);
+    // 播放中改系数 → 按新值继续：间隔变为 4 × 0.15 × 0.5 = 0.3s
+    await setRange(page, 'rng-transport-stretch', '0.5');
+    await expect(page.getByTestId('grid-freemeter-mark')).toContainText('×0.50');
+    await expect
+      .poll(async () => Math.abs((await readDelta()) - 0.3) < 0.01, { timeout: 8000 })
+      .toBe(true);
+    await page.getByTestId('btn-play').click(); // 停止
+  });
+});
+
 test.describe('性能', () => {
   test('验收：100 小节谱面滚动 ≥ 50fps', async ({ page }) => {
     await createEmptyScore(page, 'E2E 百小节');

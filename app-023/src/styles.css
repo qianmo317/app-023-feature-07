@@ -105,6 +105,8 @@ h2 { font-size: 16px; margin: 18px 0 6px; border-left: 3px solid var(--red); pad
 .loop-box { display: flex; align-items: center; gap: 8px; }
 .pos { min-width: 80px; }
 .free-note { color: #a2561c; font-size: 12px; }
+.transport-stretch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.transport-stretch input[type='range'] { width: 110px; }
 
 /* ---- 打印 ---- */
 .print-page { padding: 24px 32px; background: #fff; min-height: 100vh; }

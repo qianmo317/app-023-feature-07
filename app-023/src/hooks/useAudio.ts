@@ -10,7 +10,7 @@ export interface SoloMute {
   muted: Set<string>;
 }
 
-export function useAudio(score: Score) {
+export function useAudio(score: Score, stretch = 1) {
   const ctxRef = useRef<AudioContext | null>(null);
   const masterRef = useRef<GainNode | null>(null);
   const handleRef = useRef<SchedulerHandle | null>(null);
@@ -23,6 +23,10 @@ export function useAudio(score: Score) {
   scoreRef.current = score;
   const soloMuteRef = useRef(soloMute);
   soloMuteRef.current = soloMute;
+  const stretchRef = useRef(stretch); // 散板伸缩系数（设置页可调，播放中实时读取）
+  stretchRef.current = stretch;
+  const positionRef = useRef(position);
+  positionRef.current = position;
 
   const ensureCtx = useCallback((): { ctx: AudioContext; master: GainNode } => {
     if (!ctxRef.current) {
@@ -78,10 +82,11 @@ export function useAudio(score: Score) {
             const before = s2.bars.slice(0, ev.barIndex).reduce((a, b) => a + barTicks(b.beatsPerBar), 0);
             setPosition({ bar: ev.barIndex, tick: before });
           };
-          const handle = playRange(ctx, master, s, fromTick, toTick, 1, visual);
+          const handle = playRange(ctx, master, s, fromTick, toTick, 1, visual, 0, stretchRef.current);
           handleRef.current = handle;
           setPlaying(true);
-          const durS = (toTick - fromTick) * tickSeconds(s.bpm) + 0.25;
+          const per = tickSeconds(s.bpm) * (s.freeMeter ? stretchRef.current : 1); // 散板按等格时长×系数
+          const durS = (toTick - fromTick) * per + 0.25;
           window.setTimeout(() => {
             if (handleRef.current === handle) {
               if (loop) {
@@ -125,6 +130,13 @@ export function useAudio(score: Score) {
   }, []);
 
   useEffect(() => () => handleRef.current?.stop(), []);
+
+  // 散板播放中改伸缩系数：从当前小节起按新系数继续（非散板不响应）
+  useEffect(() => {
+    if (!playing || !scoreRef.current.freeMeter) return;
+    play(positionRef.current?.bar);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stretch]);
 
   // 独奏/静音即时生效：重触发当前区间播放
   const restartIfPlaying = useMemo(

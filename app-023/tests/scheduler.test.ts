@@ -1,11 +1,50 @@
 // 音频调度精度用例 —— 验收：BPM 120 连续 2 分钟偏差 < 10ms、无累积漂移；齐奏同刻发声
 import { describe, expect, it } from 'vitest';
 import { TICKS_PER_BEAT, type Score } from '../src/types';
-import { computeEvents, computeLoopEvents, scheduleEvents, tickSeconds } from '../src/lib/audio';
+import { computeEvents, computeLoopEvents, playRange, scheduleEvents, tickSeconds } from '../src/lib/audio';
 import { scoreFromPattern, PATTERNS, newEmptyScore } from '../src/lib/factory';
 import { barTicks, totalTicks } from '../src/lib/grid';
 
 const jijifeng = () => scoreFromPattern(PATTERNS.find((p) => p.name === '急急风')!);
+
+class FakeAudioContext {
+  currentTime = 100;
+  sampleRate = 44100;
+  destination = {} as AudioNode;
+  createGain() {
+    const node = {
+      gain: { value: 1, setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+      connect: (x: unknown) => x,
+    };
+    return node as unknown as GainNode;
+  }
+  createOscillator() {
+    const node = {
+      type: '',
+      frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+      connect: (x: unknown) => x,
+      start() {},
+      stop() {},
+    };
+    return node as unknown as OscillatorNode;
+  }
+  createBiquadFilter() {
+    const node = {
+      type: '',
+      frequency: { value: 0 },
+      Q: { value: 0 },
+      connect: (x: unknown) => x,
+    };
+    return node as unknown as BiquadFilterNode;
+  }
+  createBufferSource() {
+    const node = { buffer: null, connect: (x: unknown) => x, start() {} };
+    return node as unknown as AudioBufferSourceNode;
+  }
+  createBuffer(_c: number, len: number, _sr: number) {
+    return { sampleRate: 44100, getChannelData: () => new Float32Array(len) } as unknown as AudioBuffer;
+  }
+}
 
 describe('时间换算', () => {
   it('BPM 120 → 每拍 0.5s、每格 0.125s', () => {
@@ -78,45 +117,6 @@ describe('循环播放', () => {
 });
 
 describe('lookahead 调度器（mock ctx）', () => {
-  class FakeAudioContext {
-    currentTime = 100;
-    sampleRate = 44100;
-    destination = {} as AudioNode;
-    createGain() {
-      const node = {
-        gain: { value: 1, setValueAtTime() {}, exponentialRampToValueAtTime() {} },
-        connect: (x: unknown) => x,
-      };
-      return node as unknown as GainNode;
-    }
-    createOscillator() {
-      const node = {
-        type: '',
-        frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} },
-        connect: (x: unknown) => x,
-        start() {},
-        stop() {},
-      };
-      return node as unknown as OscillatorNode;
-    }
-    createBiquadFilter() {
-      const node = {
-        type: '',
-        frequency: { value: 0 },
-        Q: { value: 0 },
-        connect: (x: unknown) => x,
-      };
-      return node as unknown as BiquadFilterNode;
-    }
-    createBufferSource() {
-      const node = { buffer: null, connect: (x: unknown) => x, start() {} };
-      return node as unknown as AudioBufferSourceNode;
-    }
-    createBuffer(_c: number, len: number, _sr: number) {
-      return { sampleRate: 44100, getChannelData: () => new Float32Array(len) } as unknown as AudioBuffer;
-    }
-  }
-
   it('只预排 lookahead 窗口内的事件，且推进时间后继续排完', () => {
     const ctx = new FakeAudioContext() as unknown as AudioContext;
     const score = jijifeng();
@@ -165,5 +165,66 @@ describe('散板近似播放', () => {
     ];
     const evs = computeEvents(score.bars, 100, false, score.instruments, 0, barTicks(2), 0);
     expect(evs.length).toBe(1);
+  });
+});
+
+describe('散板伸缩接线', () => {
+  // 两击相邻（各 1 格），BPM 240 → 每格 0.0625s，×系数后仍落在 lookahead 窗口内
+  const twoHitScore = (freeMeter: boolean): Score => {
+    const score = newEmptyScore(freeMeter ? '散' : '板', 2, 1);
+    score.freeMeter = freeMeter;
+    score.bpm = 240;
+    score.bars[0].steps = [
+      { beats: 1, hits: [{ instrumentId: 'gu', velocity: 2, glyph: '咚' }] },
+      { beats: 1, hits: [{ instrumentId: 'gu', velocity: 2, glyph: '咚' }] },
+      { beats: 6, hits: [] },
+    ];
+    return score;
+  };
+
+  it('非散板：computeEvents 忽略 stretch，时刻完全一致', () => {
+    const score = jijifeng();
+    const total = totalTicks(score.bars);
+    const a = computeEvents(score.bars, score.bpm, false, score.instruments, 0, total, 5, 1);
+    const b = computeEvents(score.bars, score.bpm, false, score.instruments, 0, total, 5, 1.75);
+    expect(b.map((e) => e.time)).toEqual(a.map((e) => e.time));
+  });
+
+  it('散板：playRange 按等格时长×系数排每击时刻', () => {
+    const ctx = new FakeAudioContext() as unknown as AudioContext;
+    const score = twoHitScore(true);
+    // startOffsetS 负值把 startAt 拉回，让两击都落在首个 lookahead 窗口内
+    const handle = playRange(ctx, ctx.createGain(), score, 0, barTicks(2), 1, undefined, -0.05, 1.5);
+    const times = handle.scheduled().map((e) => e.time);
+    handle.stop();
+    expect(times.length).toBe(2);
+    expect(times[0]).toBeCloseTo(ctx.currentTime + 0.06 - 0.05, 9);
+    expect(times[1] - times[0]).toBeCloseTo(tickSeconds(240) * 1.5, 9);
+  });
+
+  it('非散板：playRange 传入系数后时刻仍与系数 1 完全一致', () => {
+    const ctx = new FakeAudioContext() as unknown as AudioContext;
+    const score = twoHitScore(false);
+    const h1 = playRange(ctx, ctx.createGain(), score, 0, barTicks(2), 1, undefined, -0.05, 1);
+    const h2 = playRange(ctx, ctx.createGain(), score, 0, barTicks(2), 1, undefined, -0.05, 1.5);
+    const t1 = h1.scheduled().map((e) => e.time);
+    const t2 = h2.scheduled().map((e) => e.time);
+    h1.stop();
+    h2.stop();
+    expect(t2).toEqual(t1);
+    expect(t1[1] - t1[0]).toBeCloseTo(tickSeconds(240), 9);
+  });
+
+  it('散板循环：段落跨度随系数缩放，循环间无相位漂移', () => {
+    const score = twoHitScore(true);
+    const total = barTicks(2);
+    const stretch = 1.5;
+    const evs = computeLoopEvents(score, 0, total, 10, 2, stretch);
+    const span = total * tickSeconds(score.bpm) * stretch;
+    const first = evs.filter((e) => e.time < 10 + span);
+    const second = evs.filter((e) => e.time >= 10 + span);
+    expect(first.length).toBe(2);
+    expect(second.length).toBe(2);
+    first.forEach((e, i) => expect(second[i].time - e.time).toBeCloseTo(span, 9));
   });
 });

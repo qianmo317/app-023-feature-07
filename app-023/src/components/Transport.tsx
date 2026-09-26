@@ -14,6 +14,8 @@ interface Props {
   showHighlight: boolean;
   onToggleHighlight: () => void;
   position: { bar: number; tick: number } | null;
+  stretch?: number; // 散板伸缩系数（仅散板显示）
+  onStretchChange?: (v: number) => void;
 }
 
 export function Transport({
@@ -29,6 +31,8 @@ export function Transport({
   showHighlight,
   onToggleHighlight,
   position,
+  stretch = 1,
+  onStretchChange,
 }: Props) {
   return (
     <div className="transport" data-testid="transport">
@@ -76,6 +80,20 @@ export function Transport({
         {position ? `第 ${position.bar + 1} 小节` : '—'}
       </span>
       {score.freeMeter && <span className="free-note">散板：按等格近似播放，可于设置调整伸缩</span>}
+      {score.freeMeter && onStretchChange && (
+        <label className="dim transport-stretch" data-testid="transport-stretch">
+          伸缩 {stretch.toFixed(2)}×
+          <input
+            type="range"
+            min={0.5}
+            max={2}
+            step={0.05}
+            value={stretch}
+            onChange={(e) => onStretchChange(Number(e.target.value))}
+            data-testid="rng-transport-stretch"
+          />
+        </label>
+      )}
     </div>
   );
 }

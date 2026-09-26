@@ -255,12 +255,13 @@ export function playRange(
   loopCount: number,
   onVisual?: (ev: ScheduleEvent) => void,
   startOffsetS = 0,
+  stretch = 1, // 散板伸缩系数（非散板在 computeEvents 内被忽略）
 ): SchedulerHandle {
   void barTicks; // 保持引用一致性（未直接使用）
   const startAt = ctx.currentTime + 0.06 + startOffsetS;
   const events =
     loopCount > 1
-      ? computeLoopEvents(score, fromTick, toTick, startAt, loopCount)
-      : computeEvents(score.bars, score.bpm, score.freeMeter, score.instruments, fromTick, toTick, startAt);
+      ? computeLoopEvents(score, fromTick, toTick, startAt, loopCount, stretch)
+      : computeEvents(score.bars, score.bpm, score.freeMeter, score.instruments, fromTick, toTick, startAt, stretch);
   return scheduleEvents(ctx, master, score, events, onVisual);
 }

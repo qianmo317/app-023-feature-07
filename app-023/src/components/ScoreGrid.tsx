@@ -24,6 +24,7 @@ interface Props {
   showBeatHighlightBg?: boolean;
   onCellClick?: (bar: number, tick: number) => void;
   testIdPrefix?: string;
+  stretch?: number; // 散板相对宽度提示用的当前伸缩系数（仅展示）
 }
 
 const FONT_STACK = "'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC',sans-serif";
@@ -41,6 +42,7 @@ export function ScoreGrid({
   showBeatHighlightBg = true,
   onCellClick,
   testIdPrefix = 'grid',
+  stretch = 1,
 }: Props) {
   const instruments: Instrument[] = score.instruments;
   const rows = instruments.length;
@@ -49,6 +51,8 @@ export function ScoreGrid({
   const barNumH = 16;
   const sysH = barNumH + rows * rowHeight + 14 + jianpuH; // 一行小节(系统)高度
   const gridTop = barNumH;
+  const free = score.freeMeter;
+  const cornerH = free ? 18 : 0; // 散板：顶部留出角标条（非散板为 0，布局完全不变）
 
   // 布局：小节分行（每行 barsPerRow 个）
   const layout = useMemo(() => {
@@ -61,15 +65,15 @@ export function ScoreGrid({
         row += 1;
         col = 0;
       }
-      out.push({ barIndex: bi, x: col * (w + barGap), y: row * sysH, w });
+      out.push({ barIndex: bi, x: col * (w + barGap), y: cornerH + row * sysH, w });
       col += 1;
     });
     return out;
-  }, [score.bars, pxPerTick, barGap, barsPerRow, sysH]);
+  }, [score.bars, pxPerTick, barGap, barsPerRow, sysH, cornerH]);
 
   const totalW = Math.max(...layout.map((l) => l.x + l.w), 100);
-  const totalRows = layout.length ? layout[layout.length - 1].y / sysH + 1 : 1;
-  const totalH = totalRows * sysH;
+  const totalRows = layout.length ? (layout[layout.length - 1].y - cornerH) / sysH + 1 : 1;
+  const totalH = cornerH + totalRows * sysH;
 
   const cell = (bar: number, tick: number) =>
     onCellClick ? () => onCellClick(bar, tick) : undefined;
@@ -85,6 +89,19 @@ export function ScoreGrid({
       fontFamily={FONT_STACK}
       data-bars={score.bars.length}
     >
+      {/* 散板角标：右上角标出散板与当前伸缩系数（宽度为相对表达） */}
+      {free && (
+        <text
+          x={totalW + labelW - 4}
+          y={13}
+          fontSize={12}
+          fill="#c0392b"
+          textAnchor="end"
+          data-testid={`${testIdPrefix}-freemeter-mark`}
+        >
+          {`散板 · 相对宽度 ×${stretch.toFixed(2)}`}
+        </text>
+      )}
       {layout.map(({ barIndex, x, y, w }) => {
         const bar = score.bars[barIndex];
         const offsets = stepOffsets(bar);
@@ -243,23 +260,25 @@ export function ScoreGrid({
                 })}
               </g>
             )}
-            {/* 拍线（灰）与格线（浅灰） */}
-            {Array.from({ length: barTicks(bar.beatsPerBar) + 1 }, (_, t) => {
-              const lx = gx + t * pxPerTick;
-              const isBeat = t % TICKS_PER_BEAT === 0;
-              const isBar = t === barTicks(bar.beatsPerBar);
-              return (
-                <line
-                  key={t}
-                  x1={lx}
-                  y1={y + gridTop}
-                  x2={lx}
-                  y2={y + gridTop + rows * rowHeight}
-                  stroke={isBar ? '#c0392b' : isBeat ? '#c9c9c9' : '#eee'}
-                  strokeWidth={isBar ? 2 : isBeat ? 1 : 0.5}
-                />
-              );
-            })}
+            {/* 拍线（灰）与格线（浅灰）；散板只画每拍起始线与小节线，不画格线 */}
+            {Array.from({ length: barTicks(bar.beatsPerBar) + 1 }, (_, t) => t)
+              .filter((t) => !free || t % TICKS_PER_BEAT === 0)
+              .map((t) => {
+                const lx = gx + t * pxPerTick;
+                const isBeat = t % TICKS_PER_BEAT === 0;
+                const isBar = t === barTicks(bar.beatsPerBar);
+                return (
+                  <line
+                    key={t}
+                    x1={lx}
+                    y1={y + gridTop}
+                    x2={lx}
+                    y2={y + gridTop + rows * rowHeight}
+                    stroke={isBar ? '#c0392b' : isBeat ? '#c9c9c9' : '#eee'}
+                    strokeWidth={isBar ? 2 : isBeat ? 1 : 0.5}
+                  />
+                );
+              })}
             {/* 外框 */}
             <rect
               x={gx}
